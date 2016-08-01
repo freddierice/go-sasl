@@ -201,7 +201,7 @@ func NewClient(service, host string, conf *Config) (*Client, error) {
 
 // Start uses sasl to select a mechanism for authentication. If information is
 // needed from the user, then it is requested.
-func (cl *Client) Start(mechlist string) (mech string, response string,
+func (cl *Client) Start(mechlist []string) (mech string, response string,
 	err error) {
 
 	var prompt *C.sasl_interact_t
@@ -209,7 +209,8 @@ func (cl *Client) Start(mechlist string) (mech string, response string,
 	var responseLen C.uint
 	var res C.int
 
-	mechlistStr := C.CString(mechlist)
+	mechlistExpanded := strings.Join(mechlist, ",")
+	mechlistStr := C.CString(mechlistExpanded)
 	defer C.free(unsafe.Pointer(mechlistStr))
 
 	for {
