@@ -6,6 +6,19 @@ import "testing"
 func TestNewAndFree(t *testing.T) {
 	cl := NewTestClient(t)
 	FreeTest(t, cl)
+
+	cl = NewDefaultClient(t)
+	FreeTest(t, cl)
+}
+
+// NewDefaultClient creates a new client with a default configuration.
+func NewDefaultClient(t *testing.T) *Client {
+	cl, err := NewClient("service", "hostname", nil)
+	if err != nil {
+		t.Fatalf("could not create default client")
+	}
+
+	return cl
 }
 
 // NewTestClient creates a new client for easy testing.
