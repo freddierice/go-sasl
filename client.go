@@ -111,7 +111,7 @@ type Client struct {
 	// libsaslwrapper
 	client     *C.struct_SaslClient_struct
 	ptrs       []unsafe.Pointer
-	MaxBufsize int
+	maxBufsize int
 }
 
 // NewClient returns a new (initialized) client. If MaxSsf is not initialized,
@@ -133,7 +133,7 @@ func NewClient(service, host string, conf *Config) (*Client, error) {
 		conf.MaxBufsize = 65535
 	}
 
-	cl.MaxBufsize = int(conf.MaxBufsize)
+	cl.maxBufsize = int(conf.MaxBufsize)
 
 	// generate callbacks for the client
 	hasUsername, hasPassword := C.int(0), C.int(0)
@@ -264,7 +264,8 @@ func (cl *Client) Step(challenge string) (string, error) {
 	return response, nil
 }
 
-// Encoder creates a client encoder from the Client.
+// Encode takes in a byteslice of data, then produces its encoded form to be
+// sent to a server.
 func (cl *Client) Encode(in []byte) ([]byte, error) {
 	var outputStr *C.char
 	var outputLen C.uint
@@ -283,15 +284,17 @@ func (cl *Client) Encode(in []byte) ([]byte, error) {
 	return []byte(output), nil
 }
 
-func (cl *Client) Decode(in io.Reader) ([]byte, error) {
+// Decode reads from the provided io.Reader in chunks of conf.MaxBufsize
+// until it is empty, then produces a byteslice of decoded data.
+func (cl *Client) Decode(r io.Reader) ([]byte, error) {
 	var outputStr *C.char
 	var outputLen C.uint
 
 	buf := bytes.Buffer{}
-	segment := make([]byte, cl.MaxBufsize)
+	segment := make([]byte, cl.maxBufsize)
 
 	for {
-		l, err := in.Read(segment)
+		l, err := r.Read(segment)
 		if err != nil {
 			return nil, err
 		}
