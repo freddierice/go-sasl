@@ -378,13 +378,14 @@ func doPrompt(prompt *C.sasl_interact_t) {
 
 // newError creates an error based on sasl_errstring / sasl_errdetail.
 func (c *Client) newError(res C.int, msg string) error {
-	var errMsg *C.char
+	var errMsgStr *C.char
 
 	if c.client == nil {
-		errMsg = C.sasl_errstring(res, nil, nil)
+		errMsgStr = C.sasl_errstring(res, nil, nil)
 	} else {
-		errMsg = C.sasl_errdetail(c.client.sc_conn)
+		errMsgStr = C.sasl_errdetail(c.client.sc_conn)
 	}
 
+	errMsg := C.GoString(errMsgStr)
 	return fmt.Errorf("err in %v: %v\n", msg, errMsg)
 }
