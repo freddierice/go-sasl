@@ -32,13 +32,12 @@ package sasl
 // int cb_name(void *context, int id, const char **result, unsigned *len) {
 //       SaslClient *sc = (SaslClient *)context;
 //     if (id == SASL_CB_USER || (id == SASL_CB_AUTHNAME &&
-//         !sc->sc_authname)) {
+//           !sc->sc_authname))
 //         *result = sc->sc_username;
-//         *len = strlen(sc->sc_username);
-//     } else if (id == SASL_CB_AUTHNAME) {
+//     else if (id == SASL_CB_AUTHNAME)
 //         *result = sc->sc_authname;
-//         *len = strlen(sc->sc_authname);
-//     }
+//     if (*result && len)
+//         *len = strlen(*result);
 //     return SASL_OK;
 // }
 //
