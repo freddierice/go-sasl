@@ -1,7 +1,9 @@
 package sasl
 
-// #cgo LDFLAGS: -lsasl2
+// #cgo LDFLAGS: -lsasl2 -g -O0
+// #cgo CFLAGS: -g -O0
 // #include <sasl/sasl.h>
+// #include <stdio.h>
 // #include <stdlib.h>
 // #include <string.h>
 //
@@ -108,6 +110,7 @@ type Config struct {
 type Client struct {
 	// libsaslwrapper
 	client     *C.struct_SaslClient_struct
+	ptrs       []unsafe.Pointer
 	MaxBufsize int
 }
 
@@ -149,8 +152,7 @@ func NewClient(service, host string, conf *Config) (*Client, error) {
 
 	serviceStr := C.CString(service)
 	hostStr := C.CString(host)
-	defer C.free(unsafe.Pointer(serviceStr))
-	defer C.free(unsafe.Pointer(hostStr))
+	cl.addDanglingPtrs(unsafe.Pointer(serviceStr), unsafe.Pointer(hostStr))
 	res := C.sasl_client_new(serviceStr, hostStr, nil, nil, unsafe.Pointer(cbs),
 		flags, unsafe.Pointer(&cl.client.sc_conn))
 	if res != C.SASL_OK {
@@ -209,6 +211,7 @@ func (cl *Client) Start(mechlist []string) (mech string, response string,
 	var responseLen C.uint
 	var res C.int
 
+	prompt = nil
 	mechlistExpanded := strings.Join(mechlist, ",")
 	mechlistStr := C.CString(mechlistExpanded)
 	defer C.free(unsafe.Pointer(mechlistStr))
@@ -336,8 +339,19 @@ func (cl *Client) GetSSF() (int, error) {
 	return int(ssf), nil
 }
 
-// Free the client, since it was malloced.
+// addDanglingPtrs adds unsafe.Pointers that need to stay alive for the life of
+// the client to a list so they can be freed when the client is no longer used.
+func (cl *Client) addDanglingPtrs(ptrs ...unsafe.Pointer) {
+	cl.ptrs = append(cl.ptrs, ptrs...)
+}
+
+// Free cleans up allocated memory in the client.
 func (cl *Client) Free() {
+	for _, ptr := range cl.ptrs {
+		C.free(ptr)
+	}
+	cl.ptrs = nil
+
 	if cl.client == nil {
 		return
 	}
