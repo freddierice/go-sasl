@@ -152,7 +152,8 @@ func NewClient(service, host string, conf *Config) (*Client, error) {
 
 	serviceStr := C.CString(service)
 	hostStr := C.CString(host)
-	cl.addDanglingPtrs(unsafe.Pointer(serviceStr), unsafe.Pointer(hostStr))
+	cl.addDanglingPtrs(unsafe.Pointer(serviceStr), unsafe.Pointer(hostStr),
+		unsafe.Pointer(cbs))
 	res := C.sasl_client_new(serviceStr, hostStr, nil, nil, unsafe.Pointer(cbs),
 		flags, unsafe.Pointer(&cl.client.sc_conn))
 	if res != C.SASL_OK {
@@ -160,7 +161,6 @@ func NewClient(service, host string, conf *Config) (*Client, error) {
 		cl.Free()
 		return nil, err
 	}
-	C.free(unsafe.Pointer(cbs))
 
 	secprops := C.sasl_security_properties_t{}
 	secprops.min_ssf = C.sasl_ssf_t(conf.MinSsf)
@@ -180,9 +180,9 @@ func NewClient(service, host string, conf *Config) (*Client, error) {
 
 	if len(conf.ExternalUsername) != 0 {
 		externalUsernameStrPtr := unsafe.Pointer(C.CString(conf.ExternalUsername))
+		cl.addDanglingPtrs(externalUsernameStrPtr)
 		res = C.sasl_setprop(cl.client.sc_conn, C.SASL_AUTH_EXTERNAL,
 			externalUsernameStrPtr)
-		C.free(externalUsernameStrPtr)
 		if res != C.SASL_OK {
 			err := cl.newError(res, "NewClient")
 			cl.Free()
