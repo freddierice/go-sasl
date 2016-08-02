@@ -7,7 +7,7 @@ The idea for this project came from (github.com/cloudera/python-sasl), a wrapper
 
 ## Building/Testing
 ```bash
-go build
+go get gopkg.in/freddierice/go-sasl.v1
 go test
 ```
 To build this project you must have libsasl2 installed.
