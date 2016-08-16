@@ -91,9 +91,9 @@ import (
 )
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 	"unsafe"
@@ -116,9 +116,19 @@ type Config struct {
 // Client is a structure that keeps the context of a sasl connection.
 type Client struct {
 	// libsaslwrapper
-	client     *C.struct_SaslClient_struct
-	ptrs       []unsafe.Pointer
-	maxBufsize int
+	client        *C.struct_SaslClient_struct
+	ptrs          []unsafe.Pointer
+	maxBufsize    int
+	handshakeDone bool
+}
+
+// init starts the underlying sasl libraries so that plugins can be in place
+// before we create any clients.
+func init() {
+	result := C.sasl_client_init(nil)
+	if result != C.SASL_OK {
+		log.Fatalf("could not start libsasl2: %v\n", C.sasl_errstring(result, nil, nil))
+	}
 }
 
 // NewClient returns a new (initialized) client. If MaxSsf is not initialized,
@@ -127,6 +137,8 @@ type Client struct {
 func NewClient(service, host string, conf *Config) (*Client, error) {
 	cl := &Client{}
 	cl.client = C.new_client()
+
+	cl.handshakeDone = false
 
 	if conf == nil {
 		conf = &Config{}
@@ -209,9 +221,10 @@ func NewClient(service, host string, conf *Config) (*Client, error) {
 }
 
 // Start uses sasl to select a mechanism for authentication. If information is
-// needed from the user, then it is requested.
-func (cl *Client) Start(mechlist []string) (mech string, response string,
-	err error) {
+// needed from the user, then it is requested. If done is true, then the entire
+// interaction is done. If done is false, continue with Step.
+func (cl *Client) Start(mechlist []string) (mech string, response []byte,
+	done bool, err error) {
 
 	var prompt *C.sasl_interact_t
 	var responseStr, mechStr *C.char
@@ -234,24 +247,28 @@ func (cl *Client) Start(mechlist []string) (mech string, response string,
 	}
 
 	if res != C.SASL_OK && res != C.SASL_CONTINUE {
-		return "", "", cl.newError(res, "Client Start")
+		return "", nil, false, cl.newError(res, "Client Start")
+	} else if res == C.SASL_OK {
+		cl.handshakeDone = true
 	}
 
-	response = C.GoStringN(responseStr, C.int(responseLen))
+	response = C.GoBytes(responseStr, C.int(responseLen))
 	mech = C.GoString(mechStr)
 
-	return mech, response, nil
+	return mech, response, cl.handshakeDone, nil
 }
 
-// Step takes another step in the authentication.
-func (cl *Client) Step(challenge string) (string, error) {
+// Step takes another step in the authentication. Response should be sent to
+// the server, and done let's the client know that the SASL handshake is done.
+func (cl *Client) Step(challenge []byte) (response []byte, done bool,
+	err error) {
 
 	var prompt *C.sasl_interact_t
 	var responseStr *C.char
 	var responseLen C.uint
 	var res C.int
 
-	challengeStr := C.CString(challenge)
+	challengeStr := C.CString(string(challenge))
 	challengeLen := C.uint(len(challenge))
 	for {
 		res = C.sasl_client_step(cl.client.sc_conn, challengeStr, challengeLen,
@@ -263,90 +280,76 @@ func (cl *Client) Step(challenge string) (string, error) {
 	}
 
 	if res != C.SASL_OK && res != C.SASL_CONTINUE {
-		return "", cl.newError(res, "Step")
+		return nil, false, cl.newError(res, "Step")
+	} else if res == C.SASL_OK {
+		cl.handshakeDone = true
 	}
 
-	response := C.GoStringN(responseStr, C.int(responseLen))
+	response = C.GoBytes(responseStr, C.int(responseLen))
 
-	return response, nil
+	return response, cl.handshakeDone, nil
 }
 
 // Encode takes in a byteslice of data, then produces its encoded form to be
 // sent to a server.
 func (cl *Client) Encode(in []byte) ([]byte, error) {
-	var outputStr *C.char
-	var outputLen C.uint
-
-	input := C.CString(string(in))
-	inputLen := C.uint(len(in))
-
-	res := C.sasl_encode(cl.client.sc_conn, input, inputLen,
-		unsafe.Pointer(&outputStr), &outputLen)
-
-	if res != C.SASL_OK {
-		return nil, cl.newError(res, "Encode")
+	if !cl.handshakeDone {
+		return nil, fmt.Errorf("handshake has not been completed yet")
 	}
 
-	output := C.GoStringN(outputStr, C.int(outputLen))
-	return []byte(output), nil
+	return encode(cl.client.sc_conn, in)
 }
 
-// Decode reads from the provided io.Reader in chunks of conf.MaxBufsize
-// until it is empty, then produces a byteslice of decoded data.
-func (cl *Client) Decode(r io.Reader) ([]byte, error) {
-	var outputStr *C.char
-	var outputLen C.uint
-
-	buf := bytes.Buffer{}
-	segment := make([]byte, cl.maxBufsize)
-
-	for {
-		l, err := r.Read(segment)
-		if err != nil {
-			return nil, err
-		}
-		if l == 0 {
-			break
-		}
-
-		segmentStr := C.CString(string(segment[0:l]))
-		segmentLen := C.uint(l)
-
-		ret := C.sasl_decode(cl.client.sc_conn, segmentStr, segmentLen,
-			unsafe.Pointer(&outputStr), &outputLen)
-		if ret != C.SASL_OK {
-			return nil, cl.newError(ret, "Decode")
-		}
+// Decode decodes the b bytes from the server. This can only be called after
+// a SASL handshake has been created.
+func (cl *Client) Decode(b []byte) (out []byte, err error) {
+	if !cl.handshakeDone {
+		return nil, fmt.Errorf("handshake has not been completed yet")
 	}
 
-	return buf.Bytes(), nil
+	return decode(cl.client.sc_conn, b)
+}
+
+// Wrap encode/decodes data over the supplied reader. This can only be called
+// after a SASL handshake has completed.
+func (cl *Client) Wrap(rw io.ReadWriter) (io.ReadWriter, error) {
+	if !cl.handshakeDone {
+		return nil, fmt.Errorf("handshake has not been completed yet")
+	}
+
+	return wrap(cl, rw), nil
+}
+
+// WrapReader decodes data over the supplied reader. This can only be called
+// after a SASL handshake has completed.
+func (cl *Client) WrapReader(r io.Reader) (io.Reader, error) {
+	if !cl.handshakeDone {
+		return nil, fmt.Errorf("handshake has not been completed yet")
+	}
+
+	return wrapReader(cl, r), nil
+}
+
+// WrapWriter encodes data over the supplied writer. This can only be called
+// after a SASL handshake has completed.
+func (cl *Client) WrapWriter(w io.Writer) (io.Writer, error) {
+	if !cl.handshakeDone {
+		return nil, fmt.Errorf("handshake has not been completed yet")
+	}
+
+	return wrapWriter(cl, w), nil
 }
 
 // GetUsername gets the username property from the sasl connection.
 func (cl *Client) GetUsername() (string, error) {
-	var usernameStr *C.char
-
-	res := C.sasl_getprop(cl.client.sc_conn, C.SASL_USERNAME,
-		unsafe.Pointer(&usernameStr))
-	if res != C.SASL_OK {
-		return "", cl.newError(res, "GetUsername")
-	}
-
-	username := C.GoString(usernameStr)
-	return username, nil
+	return getUsername(cl.client.sc_conn)
 }
 
 // GetSSF gets the security strength factor. If 0, then Encode/Decode are
 // unnecesary.
 func (cl *Client) GetSSF() (int, error) {
-	var ssf C.int
-
-	res := C.sasl_getprop(cl.client.sc_conn, C.SASL_SSF, unsafe.Pointer(&ssf))
-	if res != C.SASL_OK {
-		return 0, cl.newError(res, "GetSSF")
-	}
-
-	return int(ssf), nil
+	ssfUint, err := getSSF(cl.client.sc_conn)
+	return int(ssfUint), err
 }
 
 // addDanglingPtrs adds unsafe.Pointers that need to stay alive for the life of
@@ -401,15 +404,6 @@ func doPrompt(prompt *C.sasl_interact_t) {
 }
 
 // newError creates an error based on sasl_errstring / sasl_errdetail.
-func (c *Client) newError(res C.int, msg string) error {
-	var errMsgStr *C.char
-
-	if c.client == nil {
-		errMsgStr = C.sasl_errstring(res, nil, nil)
-	} else {
-		errMsgStr = C.sasl_errdetail(c.client.sc_conn)
-	}
-
-	errMsg := C.GoString(errMsgStr)
-	return fmt.Errorf("err in %v: %v\n", msg, errMsg)
+func (cl *Client) newError(res C.int, msg string) error {
+	return newError(cl.client.sc_conn, res, msg)
 }
