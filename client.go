@@ -252,7 +252,7 @@ func (cl *Client) Start(mechlist []string) (mech string, response []byte,
 		cl.handshakeDone = true
 	}
 
-	response = C.GoBytes(responseStr, C.int(responseLen))
+	response = C.GoBytes(unsafe.Pointer(responseStr), C.int(responseLen))
 	mech = C.GoString(mechStr)
 
 	return mech, response, cl.handshakeDone, nil
@@ -285,7 +285,7 @@ func (cl *Client) Step(challenge []byte) (response []byte, done bool,
 		cl.handshakeDone = true
 	}
 
-	response = C.GoBytes(responseStr, C.int(responseLen))
+	response = C.GoBytes(unsafe.Pointer(responseStr), C.int(responseLen))
 
 	return response, cl.handshakeDone, nil
 }
