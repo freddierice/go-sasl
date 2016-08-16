@@ -105,7 +105,7 @@ func (ss *Server) Start(mech string, challenge []byte) (response []byte,
 		ss.handshakeDone = true
 	}
 
-	response = C.GoBytes(responseStr, C.int(responseLen))
+	response = C.GoBytes(unsafe.Pointer(responseStr), C.int(responseLen))
 	return response, ss.handshakeDone, nil
 }
 
@@ -130,7 +130,7 @@ func (ss *Server) Step(challenge []byte) (response []byte, done bool,
 		ss.handshakeDone = true
 	}
 
-	response = C.GoBytes(responseStr, C.int(responseLen))
+	response = C.GoBytes(unsafe.Pointer(responseStr), C.int(responseLen))
 	return response, ss.handshakeDone, nil
 }
 
