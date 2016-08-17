@@ -207,7 +207,6 @@ type Config struct {
 type Client struct {
 	// libsaslwrapper
 	client        *C.struct_SaslClient_struct
-	ptrs          []unsafe.Pointer
 	maxBufsize    int
 	handshakeDone bool
 }
@@ -411,19 +410,8 @@ func (cl *Client) GetSSF() (int, error) {
 	return int(ssfUint), err
 }
 
-// addDanglingPtrs adds unsafe.Pointers that need to stay alive for the life of
-// the client to a list so they can be freed when the client is no longer used.
-func (cl *Client) addDanglingPtrs(ptrs ...unsafe.Pointer) {
-	cl.ptrs = append(cl.ptrs, ptrs...)
-}
-
 // Free cleans up allocated memory in the client.
 func (cl *Client) Free() {
-	for _, ptr := range cl.ptrs {
-		C.free(ptr)
-	}
-	cl.ptrs = nil
-
 	if cl.client != nil {
 		C.free_client(cl.client)
 		cl.client = nil
