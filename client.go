@@ -18,16 +18,92 @@ package sasl
 // typedef struct SaslClient_struct {
 //     sasl_conn_t *sc_conn;
 //     sasl_secret_t* sc_secret;
+//     sasl_callback_t *sc_cbs;
+//     char *sc_hostname;
+//     char *sc_service;
 //     char *sc_username;
 //     char *sc_authname;
 //     char *sc_password;
 //     char *sc_realm;
 // } SaslClient;
 //
-// SaslClient* new_client() {
+// void generate_callbacks(SaslClient *);
+//
+// SaslClient* new_client(char *hostname, char *service, char *username,
+//       char *authname, char *password, char *realm,
+//       char *external_username, unsigned external_ssf, unsigned flags,
+//       unsigned min_ssf, unsigned max_ssf, unsigned maxbufsize) {
+//     int res;
+//     sasl_security_properties_t secprops;
 //     SaslClient *ret = (SaslClient *)malloc(sizeof(SaslClient));
 //     memset(ret, 0, sizeof(SaslClient));
+//
+//     ret->sc_hostname = hostname;
+//     ret->sc_service  = service;
+//     ret->sc_username = username;
+//     ret->sc_authname = authname;
+//     ret->sc_password = password;
+//     ret->sc_realm    = realm;
+//
+//     generate_callbacks(ret);
+//
+//     res = sasl_client_new(ret->sc_service, ret->sc_hostname, 0, 0,
+//             ret->sc_cbs, flags, &ret->sc_conn);
+//     if( res != SASL_OK )
+//         goto cleanup;
+//
+//     if( external_username ){
+//	       res = sasl_setprop(ret->sc_conn, SASL_AUTH_EXTERNAL,
+//		           &external_username);
+//         if( res != SASL_OK )
+//             goto cleanup;
+//
+//         res = sasl_setprop(ret->sc_conn, SASL_SSF_EXTERNAL, &external_ssf);
+//         if( res != SASL_OK )
+//             goto cleanup;
+//     }
+//
+//     memset(&secprops, 0, sizeof(sasl_security_properties_t));
+//     secprops.min_ssf = min_ssf;
+//     secprops.max_ssf = max_ssf;
+//     secprops.maxbufsize = maxbufsize;
+//
+//     res = sasl_setprop(ret->sc_conn, SASL_SEC_PROPS, &secprops);
+//     if( res != SASL_OK )
+//         goto cleanup;
 //     return ret;
+// cleanup:
+//     free(ret);
+//     return NULL;
+// }
+//
+// void free_client(SaslClient *sc) {
+//     if( !sc )
+//         return;
+//
+//     // clear simple fields
+//     if( sc->sc_secret )
+//         free(sc->sc_secret);
+//     if( sc->sc_cbs )
+//         free(sc->sc_cbs);
+//     if( sc->sc_hostname )
+//         free(sc->sc_hostname);
+//     if( sc->sc_service )
+//         free(sc->sc_service);
+//     if( sc->sc_username )
+//         free(sc->sc_username);
+//     if( sc->sc_authname )
+//         free(sc->sc_authname);
+//     if( sc->sc_password )
+//         free(sc->sc_password);
+//     if( sc->sc_realm )
+//         free(sc->sc_realm);
+//
+//     //dispose of the connection
+//     if( sc->sc_conn )
+//         sasl_dispose(&sc->sc_conn);
+//
+//     free(sc);
 // }
 //
 // int cb_name(SaslClient *sc, int id, const char **result, unsigned *len) {
@@ -45,8 +121,9 @@ package sasl
 //     size_t length = strlen(sc->sc_password);
 //
 //     if (id == SASL_CB_PASS) {
-//         if( !sc->sc_secret )
-//		       sc->sc_secret = (sasl_secret_t *)malloc(sizeof(sasl_secret_t));
+//         if( sc->sc_secret )
+//             free(sc->sc_secret);
+//		   sc->sc_secret = (sasl_secret_t *)malloc(sizeof(sasl_secret_t)+length+1);
 //         sc->sc_secret->len = length;
 //         memcpy(sc->sc_secret->data, sc->sc_password, length);
 //     } else {
@@ -70,24 +147,23 @@ package sasl
 //     cbs->context = context;
 // }
 //
-// sasl_callback_t *generate_callbacks(SaslClient *sc, int username, int password,
-//       int realm) {
+// void generate_callbacks(SaslClient *sc) {
 //     sasl_callback_t *cbs = (sasl_callback_t *)malloc(
 //           sizeof(sasl_callback_t)*10);
 //     int cbiter = 0;
 //
-//     if( realm ) {
+//     if( sc->sc_realm ) {
 //         add_callback(cbs + cbiter++, (void *)sc, SASL_CB_GETREALM,
 //           (int (*)(void))cb_getrealm);
 //     } else {
 //         add_callback(cbs + cbiter++, (void *)sc, SASL_CB_GETREALM, NULL);
 //     }
-//     if( username ) {
+//     if( sc->sc_username ) {
 //         add_callback(cbs + cbiter++, (void *)sc, SASL_CB_USER,
 //           (int (*)(void))cb_name);
 //         add_callback(cbs + cbiter++, (void *)sc, SASL_CB_AUTHNAME,
 //           (int (*)(void))cb_name);
-//         if( password ) {
+//         if( sc->sc_password ) {
 //             add_callback(cbs + cbiter++, (void *)sc, SASL_CB_PASS,
 //               (int (*)(void))cb_password);
 //         } else {
@@ -96,7 +172,7 @@ package sasl
 //     }
 //     add_callback(cbs + cbiter++, (void *)sc, SASL_CB_LIST_END, NULL);
 //
-//     return cbs;
+//     sc->sc_cbs = cbs;
 // }
 //
 import (
@@ -149,15 +225,11 @@ func init() {
 // then it defaults to 65535.  If MaxBufsize is 0, then it defaults to 65535.
 // If conf is nil, then use defaults.
 func NewClient(service, host string, conf *Config) (*Client, error) {
-	cl := &Client{}
 
-	cl.handshakeDone = false
-
+	// fix defaults:
 	if conf == nil {
 		conf = &Config{}
 	}
-
-	// fix defaults:
 	if conf.MaxSsf == 0 {
 		conf.MaxSsf = 65535
 	}
@@ -165,93 +237,42 @@ func NewClient(service, host string, conf *Config) (*Client, error) {
 		conf.MaxBufsize = 65535
 	}
 
-	cl.maxBufsize = int(conf.MaxBufsize)
+	// create the client
+	cl := &Client{
+		handshakeDone: false,
+		maxBufsize:    int(conf.MaxBufsize),
+	}
 
 	// setup c client
-	cl.client = C.new_client()
-	hasUsername, hasPassword, hasRealm := C.int(0), C.int(0), C.int(0)
+	hostStr := C.CString(host)
+	serviceStr := C.CString(service)
+	var usernameStr, authnameStr, passwordStr, realmStr,
+		externalUsernameStr *C.char
+	flags := C.unsigned(0)
 	if len(conf.Username) > 0 {
-		hasUsername = 1
-		cl.client.sc_username = C.CString(conf.Username)
-		cl.addDanglingPtrs(unsafe.Pointer(cl.client.sc_username))
-	} else {
-		cl.client.sc_username = (*C.char)(unsafe.Pointer(nil))
-	}
-	if len(conf.Password) > 0 {
-		hasPassword = 1
-		cl.client.sc_password = C.CString(conf.Password)
-		cl.addDanglingPtrs(unsafe.Pointer(cl.client.sc_password))
-	} else {
-		cl.client.sc_password = (*C.char)(unsafe.Pointer(nil))
-	}
-	if len(conf.Realm) > 0 {
-		hasRealm = 1
-		cl.client.sc_realm = C.CString(conf.Realm)
-		cl.addDanglingPtrs(unsafe.Pointer(cl.client.sc_realm))
-	} else {
-		cl.client.sc_realm = (*C.char)(unsafe.Pointer(nil))
+		usernameStr = C.CString(conf.Username)
 	}
 	if len(conf.Authname) > 0 {
-
-		cl.client.sc_authname = C.CString(conf.Authname)
-		cl.addDanglingPtrs(unsafe.Pointer(cl.client.sc_authname))
-	} else {
-		cl.client.sc_authname = (*C.char)(unsafe.Pointer(nil))
+		authnameStr = C.CString(conf.Authname)
 	}
-	cl.client.sc_secret = nil
-	cbs := C.generate_callbacks(cl.client, hasUsername, hasPassword, hasRealm)
-
-	flags := C.unsigned(0)
+	if len(conf.Password) > 0 {
+		passwordStr = C.CString(conf.Password)
+	}
+	if len(conf.Realm) > 0 {
+		realmStr = C.CString(conf.Realm)
+	}
+	if len(conf.ExternalUsername) > 0 {
+		externalUsernameStr = C.CString(conf.ExternalUsername)
+	}
 	if len(conf.Authname) == 0 && conf.Authname != conf.Username {
 		flags |= C.SASL_NEED_PROXY
 	}
-
-	serviceStr := C.CString(service)
-	hostStr := C.CString(host)
-	cl.addDanglingPtrs(unsafe.Pointer(serviceStr), unsafe.Pointer(hostStr),
-		unsafe.Pointer(cbs))
-	res := C.sasl_client_new(serviceStr, hostStr, nil, nil, unsafe.Pointer(cbs),
-		flags, unsafe.Pointer(&cl.client.sc_conn))
-	if res != C.SASL_OK {
-		err := cl.newError(res, "NewClient")
+	cl.client = C.new_client(hostStr, serviceStr, usernameStr, authnameStr,
+		passwordStr, realmStr, externalUsernameStr, C.uint(conf.ExternalSsf),
+		flags, C.uint(conf.MinSsf), C.uint(conf.MaxSsf), C.uint(conf.MaxBufsize))
+	if cl.client == nil {
 		cl.Free()
-		return nil, err
-	}
-
-	secprops := C.sasl_security_properties_t{}
-	secprops.min_ssf = C.sasl_ssf_t(conf.MinSsf)
-	secprops.max_ssf = C.sasl_ssf_t(conf.MaxSsf)
-	secprops.maxbufsize = C.unsigned(conf.MaxBufsize)
-	secprops.property_names = nil
-	secprops.property_values = nil
-	secprops.security_flags = 0
-
-	res = C.sasl_setprop(cl.client.sc_conn, C.SASL_SEC_PROPS,
-		unsafe.Pointer(&secprops))
-	if res != C.SASL_OK {
-		err := cl.newError(res, "")
-		cl.Free()
-		return nil, err
-	}
-
-	if len(conf.ExternalUsername) != 0 {
-		externalUsernameStrPtr := unsafe.Pointer(C.CString(conf.ExternalUsername))
-		cl.addDanglingPtrs(externalUsernameStrPtr)
-		res = C.sasl_setprop(cl.client.sc_conn, C.SASL_AUTH_EXTERNAL,
-			externalUsernameStrPtr)
-		if res != C.SASL_OK {
-			err := cl.newError(res, "NewClient")
-			cl.Free()
-			return nil, err
-		}
-
-		res = C.sasl_setprop(cl.client.sc_conn, C.SASL_SSF_EXTERNAL,
-			unsafe.Pointer(&conf.ExternalSsf))
-		if res != C.SASL_OK {
-			err := cl.newError(res, "NewClient")
-			cl.Free()
-			return nil, err
-		}
+		return nil, fmt.Errorf("could not create the client")
 	}
 
 	return cl, nil
@@ -402,17 +423,10 @@ func (cl *Client) Free() {
 	}
 	cl.ptrs = nil
 
-	if cl.client == nil {
-		return
+	if cl.client != nil {
+		C.free_client(cl.client)
+		cl.client = nil
 	}
-
-	if cl.client.sc_conn != nil {
-		C.sasl_dispose(unsafe.Pointer(&cl.client.sc_conn))
-		cl.client.sc_conn = nil
-	}
-
-	C.free(unsafe.Pointer(cl.client))
-	cl.client = nil
 }
 
 // doPrompt takes user input from a prompt. If the prompt fails (i.e. if stdin
