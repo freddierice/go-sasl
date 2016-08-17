@@ -54,7 +54,7 @@ package sasl
 //
 //     if( external_username ){
 //	       res = sasl_setprop(ret->sc_conn, SASL_AUTH_EXTERNAL,
-//		           &external_username);
+//		           external_username);
 //         if( res != SASL_OK )
 //             goto cleanup;
 //
@@ -263,6 +263,7 @@ func NewClient(service, host string, conf *Config) (*Client, error) {
 	}
 	if len(conf.ExternalUsername) > 0 {
 		externalUsernameStr = C.CString(conf.ExternalUsername)
+		defer C.free(unsafe.Pointer(externalUsernameStr))
 	}
 	if len(conf.Authname) == 0 && conf.Authname != conf.Username {
 		flags |= C.SASL_NEED_PROXY
