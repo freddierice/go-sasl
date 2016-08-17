@@ -21,6 +21,7 @@ package sasl
 //     char *sc_username;
 //     char *sc_authname;
 //     char *sc_password;
+//     char *sc_realm;
 // } SaslClient;
 //
 // SaslClient* new_client() {
@@ -29,10 +30,8 @@ package sasl
 //     return ret;
 // }
 //
-// int cb_name(void *context, int id, const char **result, unsigned *len) {
-//       SaslClient *sc = (SaslClient *)context;
-//     if (id == SASL_CB_USER || (id == SASL_CB_AUTHNAME &&
-//           !sc->sc_authname))
+// int cb_name(SaslClient *sc, int id, const char **result, unsigned *len) {
+//     if (id == SASL_CB_USER )
 //         *result = sc->sc_username;
 //     else if (id == SASL_CB_AUTHNAME)
 //         *result = sc->sc_authname;
@@ -41,12 +40,13 @@ package sasl
 //     return SASL_OK;
 // }
 //
-// int cb_password(sasl_conn_t *conn, void *context, int id,
+// int cb_password(sasl_conn_t *conn, SaslClient *sc, int id,
 //       sasl_secret_t **psecret) {
-//     SaslClient *sc = (SaslClient *)context;
 //     size_t length = strlen(sc->sc_password);
 //
 //     if (id == SASL_CB_PASS) {
+//         if( !sc->sc_secret )
+//		       sc->sc_secret = (sasl_secret_t *)malloc(sizeof(sasl_secret_t));
 //         sc->sc_secret->len = length;
 //         memcpy(sc->sc_secret->data, sc->sc_password, length);
 //     } else {
@@ -57,6 +57,12 @@ package sasl
 //     return SASL_OK;
 // }
 //
+// int cb_getrealm(SaslClient *sc, int id, const char **availrealms,
+//   const char **result) {
+//     *result = (const char *)sc->sc_realm;
+//     return SASL_OK;
+// }
+//
 // void add_callback(sasl_callback_t* cbs, void *context, unsigned long id,
 //       int (*proc)(void)) {
 //     cbs->id = id;
@@ -64,12 +70,18 @@ package sasl
 //     cbs->context = context;
 // }
 //
-// sasl_callback_t *generate_callbacks(SaslClient *sc, int username, int password) {
+// sasl_callback_t *generate_callbacks(SaslClient *sc, int username, int password,
+//       int realm) {
 //     sasl_callback_t *cbs = (sasl_callback_t *)malloc(
-//           sizeof(sasl_callback_t)*6);
+//           sizeof(sasl_callback_t)*10);
 //     int cbiter = 0;
 //
-//     add_callback(cbs + cbiter++, (void *)sc, SASL_CB_GETREALM, NULL);
+//     if( realm ) {
+//         add_callback(cbs + cbiter++, (void *)sc, SASL_CB_GETREALM,
+//           (int (*)(void))cb_getrealm);
+//     } else {
+//         add_callback(cbs + cbiter++, (void *)sc, SASL_CB_GETREALM, NULL);
+//     }
 //     if( username ) {
 //         add_callback(cbs + cbiter++, (void *)sc, SASL_CB_USER,
 //           (int (*)(void))cb_name);
@@ -83,6 +95,7 @@ package sasl
 //         }
 //     }
 //     add_callback(cbs + cbiter++, (void *)sc, SASL_CB_LIST_END, NULL);
+//
 //     return cbs;
 // }
 //
@@ -106,6 +119,7 @@ type Config struct {
 	Authname         string
 	Password         string
 	ExternalUsername string
+	Realm            string
 
 	MinSsf      uint32
 	MaxSsf      uint32
@@ -136,7 +150,6 @@ func init() {
 // If conf is nil, then use defaults.
 func NewClient(service, host string, conf *Config) (*Client, error) {
 	cl := &Client{}
-	cl.client = C.new_client()
 
 	cl.handshakeDone = false
 
@@ -154,15 +167,39 @@ func NewClient(service, host string, conf *Config) (*Client, error) {
 
 	cl.maxBufsize = int(conf.MaxBufsize)
 
-	// generate callbacks for the client
-	hasUsername, hasPassword := C.int(0), C.int(0)
-	if len(conf.Username) != 0 {
+	// setup c client
+	cl.client = C.new_client()
+	hasUsername, hasPassword, hasRealm := C.int(0), C.int(0), C.int(0)
+	if len(conf.Username) > 0 {
 		hasUsername = 1
+		cl.client.sc_username = C.CString(conf.Username)
+		cl.addDanglingPtrs(unsafe.Pointer(cl.client.sc_username))
+	} else {
+		cl.client.sc_username = (*C.char)(unsafe.Pointer(nil))
 	}
-	if len(conf.Password) != 0 {
+	if len(conf.Password) > 0 {
 		hasPassword = 1
+		cl.client.sc_password = C.CString(conf.Password)
+		cl.addDanglingPtrs(unsafe.Pointer(cl.client.sc_password))
+	} else {
+		cl.client.sc_password = (*C.char)(unsafe.Pointer(nil))
 	}
-	cbs := C.generate_callbacks(cl.client, hasUsername, hasPassword)
+	if len(conf.Realm) > 0 {
+		hasRealm = 1
+		cl.client.sc_realm = C.CString(conf.Realm)
+		cl.addDanglingPtrs(unsafe.Pointer(cl.client.sc_realm))
+	} else {
+		cl.client.sc_realm = (*C.char)(unsafe.Pointer(nil))
+	}
+	if len(conf.Authname) > 0 {
+
+		cl.client.sc_authname = C.CString(conf.Authname)
+		cl.addDanglingPtrs(unsafe.Pointer(cl.client.sc_authname))
+	} else {
+		cl.client.sc_authname = (*C.char)(unsafe.Pointer(nil))
+	}
+	cl.client.sc_secret = nil
+	cbs := C.generate_callbacks(cl.client, hasUsername, hasPassword, hasRealm)
 
 	flags := C.unsigned(0)
 	if len(conf.Authname) == 0 && conf.Authname != conf.Username {
