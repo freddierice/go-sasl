@@ -15,7 +15,6 @@ package sasl
 import "C"
 import (
 	"fmt"
-	"log"
 	"unsafe"
 )
 
@@ -79,8 +78,6 @@ func decode(conn *C.struct_sasl_conn, buf []byte) (out []byte,
 	input := C.CString(string(buf))
 	inputLen := C.uint(len(buf))
 
-	log.Print("calling sasl_decode")
-	log.Print(buf)
 	res := C.sasl_decode(conn, input, inputLen, unsafe.Pointer(&outputStr),
 		&outputLen)
 	if res != C.SASL_OK {
