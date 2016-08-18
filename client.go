@@ -140,6 +140,14 @@ package sasl
 //     return SASL_OK;
 // }
 //
+// int cb_canon_user(sasl_conn_t *conn, SaslClient *sc, const char *user,
+//       unsigned userLen, unsigned flags, const char *user_realm, char *out,
+//       unsigned out_max, unsigned *out_len) {
+//     printf("called\n");
+//     *out_len = (unsigned)snprintf(out, out_max, "%s@%s", user, user_realm);
+//     return SASL_OK;
+// }
+//
 // void add_callback(sasl_callback_t* cbs, void *context, unsigned long id,
 //       int (*proc)(void)) {
 //     cbs->id = id;
@@ -170,6 +178,9 @@ package sasl
 //             add_callback(cbs + cbiter++, (void *)sc, SASL_CB_PASS, NULL);
 //         }
 //     }
+//
+//     add_callback(cbs + cbiter++, (void *)sc, SASL_CB_CANON_USER,
+//       (int (*)(void))cb_canon_user);
 //     add_callback(cbs + cbiter++, (void *)sc, SASL_CB_LIST_END, NULL);
 //
 //     sc->sc_cbs = cbs;

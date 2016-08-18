@@ -3,17 +3,26 @@ package sasl
 // #cgo LDFLAGS: -lsasl2
 // #cgo CFLAGS: -Wall
 // #include <sasl/sasl.h>
+// #include <stdio.h>
+//
+// int getprop_uint(sasl_conn_t *conn, int propnum, unsigned *ret_num) {
+//     int ret;
+//     unsigned *ret_num_ptr;
+//     ret = sasl_getprop(conn, propnum, (const void **)&ret_num_ptr);
+//     *ret_num = *ret_num_ptr;
+//     return ret;
+// }
 import "C"
 import (
-	"bytes"
 	"fmt"
+	"log"
 	"unsafe"
 )
 
 // getPropString collects a property from a connection as a string.
 func getPropString(conn *C.struct_sasl_conn, prop C.int) (string, error) {
 	var retStr *C.char
-	res := C.sasl_getprop(conn, prop, &retStr)
+	res := C.sasl_getprop(conn, prop, unsafe.Pointer(&retStr))
 	if res != C.SASL_OK {
 		return "", newError(conn, res, "getPropString")
 	}
@@ -22,8 +31,8 @@ func getPropString(conn *C.struct_sasl_conn, prop C.int) (string, error) {
 
 // getPropUint collects a property from a connection as a uint.
 func getPropUint(conn *C.struct_sasl_conn, prop C.int) (uint, error) {
-	var retInt C.uint
-	res := C.sasl_getprop(conn, prop, &retInt)
+	retInt := C.uint(1)
+	res := C.getprop_uint(conn, prop, &retInt)
 	if res != C.SASL_OK {
 		return 0, newError(conn, res, "getPropUint")
 	}
@@ -45,9 +54,7 @@ func getSSF(conn *C.struct_sasl_conn) (uint, error) {
 	return getPropUint(conn, C.SASL_SSF)
 }
 
-// encodePartial readies the bytes in buf for transit, where the number of
-// bytes in the buf is ensured to be less than SASL_MAXOUTBUF.
-func encodePartial(conn *C.struct_sasl_conn, buf []byte) (out []byte, err error) {
+func encode(conn *C.struct_sasl_conn, buf []byte) (out []byte, err error) {
 	var outputStr *C.char
 	var outputLen C.uint
 
@@ -64,9 +71,7 @@ func encodePartial(conn *C.struct_sasl_conn, buf []byte) (out []byte, err error)
 	return out, nil
 }
 
-// decodePartial decodes the buf from transit, where the number of
-// bytes in the buf is ensured to be less than SASL_MAXOUTBUF.
-func decodePartial(conn *C.struct_sasl_conn, buf []byte) (out []byte,
+func decode(conn *C.struct_sasl_conn, buf []byte) (out []byte,
 	err error) {
 	var outputStr *C.char
 	var outputLen C.uint
@@ -74,54 +79,16 @@ func decodePartial(conn *C.struct_sasl_conn, buf []byte) (out []byte,
 	input := C.CString(string(buf))
 	inputLen := C.uint(len(buf))
 
+	log.Print("calling sasl_decode")
+	log.Print(buf)
 	res := C.sasl_decode(conn, input, inputLen, unsafe.Pointer(&outputStr),
 		&outputLen)
 	if res != C.SASL_OK {
-		return nil, newError(conn, res, "encode")
+		return nil, newError(conn, res, "decode")
 	}
 
-	out = C.GoBytes(outputStr, C.int(outputLen))
+	out = C.GoBytes(unsafe.Pointer(outputStr), C.int(outputLen))
 	return out, nil
-}
-
-// encode encodes the bytes for transit.
-func encode(conn *C.struct_sasl_conn, buf []byte) ([]byte, error) {
-	return fullCoding(conn, buf, encodePartial)
-}
-
-// decode decodes the buf from transit.
-func decode(conn *C.struct_sasl_conn, buf []byte) ([]byte, error) {
-	return fullCoding(conn, buf, decodePartial)
-}
-
-// fullCoding encodes/decodes (depending on the partial function), a buffer for
-// the conn connection.
-func fullCoding(conn *C.struct_sasl_conn, buf []byte,
-	partial func(*C.struct_sasl_conn, []byte) ([]byte, error)) (out []byte, err error) {
-
-	byteBuf := &bytes.Buffer{}
-	maxBufUint, err := getMaxOutBuf(conn)
-	if err != nil {
-		return nil, err
-	}
-
-	maxBuf := int(maxBufUint)
-	for len(buf) > 0 {
-		currLen := len(buf)
-		if currLen > maxBuf {
-			currLen = maxBuf
-		}
-		segment := buf[0:currLen]
-		buf = buf[currLen:]
-
-		partialOut, err := partial(conn, segment)
-		if err != nil {
-			return nil, err
-		}
-		byteBuf.Write(partialOut)
-	}
-
-	return byteBuf.Bytes(), nil
 }
 
 // newError creates a new error from a connection result.
