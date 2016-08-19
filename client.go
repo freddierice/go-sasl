@@ -169,7 +169,6 @@ package sasl
 //     } else {
 //         add_callback(cbs + cbiter++, (void *)sc, SASL_CB_GETREALM, NULL);
 //     }
-//     if( sc->sc_username ) {
 //         add_callback(cbs + cbiter++, (void *)sc, SASL_CB_USER,
 //           (int (*)(void))cb_name);
 //         add_callback(cbs + cbiter++, (void *)sc, SASL_CB_AUTHNAME,
@@ -180,7 +179,6 @@ package sasl
 //         } else {
 //             add_callback(cbs + cbiter++, (void *)sc, SASL_CB_PASS, NULL);
 //         }
-//     }
 //
 //     add_callback(cbs + cbiter++, (void *)sc, SASL_CB_CANON_USER,
 //       (int (*)(void))cb_canon_user);
