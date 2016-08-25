@@ -143,8 +143,11 @@ package sasl
 // int cb_canon_user(sasl_conn_t *conn, SaslClient *sc, const char *user,
 //       unsigned userLen, unsigned flags, const char *user_realm, char *out,
 //       unsigned out_max, unsigned *out_len) {
-//     printf("called\n");
-//     *out_len = (unsigned)snprintf(out, out_max, "%s@%s", user, user_realm);
+//     if( user_realm )
+//	       *out_len = (unsigned)snprintf(out, out_max, "%s@%s", user,
+//                      user_realm);
+//     else
+//         *out_len = (unsigned)snprintf(out, out_max, "%s", user);
 //     return SASL_OK;
 // }
 //
@@ -166,7 +169,6 @@ package sasl
 //     } else {
 //         add_callback(cbs + cbiter++, (void *)sc, SASL_CB_GETREALM, NULL);
 //     }
-//     if( sc->sc_username ) {
 //         add_callback(cbs + cbiter++, (void *)sc, SASL_CB_USER,
 //           (int (*)(void))cb_name);
 //         add_callback(cbs + cbiter++, (void *)sc, SASL_CB_AUTHNAME,
@@ -177,7 +179,6 @@ package sasl
 //         } else {
 //             add_callback(cbs + cbiter++, (void *)sc, SASL_CB_PASS, NULL);
 //         }
-//     }
 //
 //     add_callback(cbs + cbiter++, (void *)sc, SASL_CB_CANON_USER,
 //       (int (*)(void))cb_canon_user);

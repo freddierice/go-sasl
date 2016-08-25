@@ -9,19 +9,51 @@ package sasl
 //
 // typedef struct SaslServer_struct {
 //     sasl_conn_t *ss_conn;
+//     char        *ss_service;
+//     char        *ss_hostname;
+//     char        *ss_realm;
 // } SaslServer;
 //
-// SaslServer* new_server() {
+// void free_server(SaslServer *);
+//
+// SaslServer* new_server(char *service, char * hostname, char *realm) {
 //     SaslServer *ret = (SaslServer *)malloc(sizeof(SaslServer));
+//     int res;
+//
 //     memset(ret, 0, sizeof(SaslServer));
+//
+//     ret->ss_service = service;
+//     ret->ss_hostname = hostname;
+//     ret->ss_realm = realm;
+//
+//     res = sasl_server_new(service, hostname, realm, NULL, NULL, NULL, 0,
+//             &ret->ss_conn);
+//     if( res != SASL_OK )
+//         goto cleanup;
+//
+//
 //     return ret;
+// cleanup:
+//     free_server(ret);
+//     return NULL;
 // }
 //
+// void free_server(SaslServer *ss) {
+//     if( !ss ) return;
+//
+//     if( ss->ss_service ) free( ss->ss_service );
+//     if( ss->ss_hostname ) free( ss->ss_hostname );
+//     if( ss->ss_realm ) free( ss->ss_realm );
+//
+//     if( ss->ss_conn ) sasl_dispose( &ss->ss_conn );
+// }
 import (
 	"C"
 )
 import (
+	"fmt"
 	"log"
+	"strings"
 	"unsafe"
 )
 
@@ -30,7 +62,6 @@ type Server struct {
 	// libsaslwrapper
 	server        *C.struct_SaslServer_struct
 	handshakeDone bool
-	ptrs          []unsafe.Pointer
 }
 
 // init starts the underlying sasl libraries so that plugins can be in place
@@ -47,22 +78,16 @@ func init() {
 // will be derived by host in this case.
 func NewServer(service, host, realm string) (*Server, error) {
 	ss := &Server{}
-	ss.server = C.new_server()
 
 	serviceStr := C.CString(service)
 	hostStr := C.CString(host)
 	realmStr := (*C.char)(unsafe.Pointer(nil))
 	if realm != "" {
 		realmStr = C.CString(realm)
-		ss.addDanglingPtrs(unsafe.Pointer(realmStr))
 	}
-	ss.addDanglingPtrs(unsafe.Pointer(serviceStr), unsafe.Pointer(hostStr))
-	res := C.sasl_server_new(serviceStr, hostStr, realmStr, nil, nil, nil,
-		0, unsafe.Pointer(&ss.server.ss_conn))
-	if res != C.SASL_OK {
-		err := ss.newError(res, "NewServer")
-		ss.Free()
-		return nil, err
+	ss.server = C.new_server(serviceStr, hostStr, realmStr)
+	if ss.server == nil {
+		return nil, fmt.Errorf("could not create the server")
 	}
 
 	return ss, nil
@@ -71,16 +96,24 @@ func NewServer(service, host, realm string) (*Server, error) {
 // ListMech provides a list of mechanisms with which the server can negotiate.
 func (ss *Server) ListMech() ([]string, error) {
 	var retstr *C.char
+
 	prefixStr := C.CString("")
+	defer C.free(unsafe.Pointer(prefixStr))
 	sepStr := C.CString(",")
+	defer C.free(unsafe.Pointer(sepStr))
 	suffixStr := C.CString("")
+	defer C.free(unsafe.Pointer(suffixStr))
+
 	res := C.sasl_listmech(ss.server.ss_conn, nil, prefixStr, sepStr, suffixStr,
 		&retstr, nil, nil)
 	if res != C.SASL_OK {
 		return nil, ss.newError(res, "ListMech")
 	}
 
-	return nil, nil
+	sep := C.GoString(retstr)
+	mechs := strings.Split(sep, ",")
+
+	return mechs, nil
 }
 
 // Start initialtes the handshake between the server and client, where mech is
@@ -96,7 +129,6 @@ func (ss *Server) Start(mech string, challenge []byte) (response []byte,
 	challengeLen := C.uint(len(challenge))
 	mechStr := C.CString(mech)
 
-	ss.addDanglingPtrs(unsafe.Pointer(challengeStr), unsafe.Pointer(mechStr))
 	res := C.sasl_server_start(ss.server.ss_conn, mechStr, challengeStr,
 		challengeLen, &responseStr, &responseLen)
 	if res != C.SASL_OK || res != C.SASL_CONTINUE {
@@ -104,6 +136,9 @@ func (ss *Server) Start(mech string, challenge []byte) (response []byte,
 	} else if res == C.SASL_OK {
 		ss.handshakeDone = true
 	}
+
+	C.free(unsafe.Pointer(challengeStr))
+	C.free(unsafe.Pointer(mechStr))
 
 	response = C.GoBytes(unsafe.Pointer(responseStr), C.int(responseLen))
 	return response, ss.handshakeDone, nil
@@ -158,29 +193,13 @@ func (ss *Server) GetSSF() (int, error) {
 	return int(ssfUint), err
 }
 
-// addDanglingPtrs adds unsafe.Pointers that need to stay alive for the life of
-// the server to a list so they can be freed when the server is no longer used.
-func (ss *Server) addDanglingPtrs(ptrs ...unsafe.Pointer) {
-	ss.ptrs = append(ss.ptrs, ptrs...)
-}
-
 // Free cleans up allocated memory in the Server.
 func (ss *Server) Free() {
-	for _, ptr := range ss.ptrs {
-		C.free(ptr)
-	}
-	ss.ptrs = nil
-
 	if ss.server == nil {
 		return
 	}
 
-	if ss.server.ss_conn != nil {
-		C.sasl_dispose(unsafe.Pointer(&ss.server.ss_conn))
-		ss.server.ss_conn = nil
-	}
-
-	C.free(unsafe.Pointer(ss.server))
+	C.free_server(ss.server)
 	ss.server = nil
 }
 
