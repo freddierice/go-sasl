@@ -21,7 +21,8 @@ import (
 // getPropString collects a property from a connection as a string.
 func getPropString(conn *C.struct_sasl_conn, prop C.int) (string, error) {
 	var retStr *C.char
-	res := C.sasl_getprop(conn, prop, unsafe.Pointer(&retStr))
+	p := unsafe.Pointer(retStr)
+	res := C.sasl_getprop(conn, prop, &p)
 	if res != C.SASL_OK {
 		return "", newError(conn, res, "getPropString")
 	}
@@ -66,7 +67,7 @@ func encode(conn *C.struct_sasl_conn, buf []byte) (out []byte, err error) {
 		return nil, newError(conn, res, "encode")
 	}
 
-	out = C.GoBytes(outputStr, C.int(outputLen))
+	out = C.GoBytes(unsafe.Pointer(outputStr), C.int(outputLen))
 	return out, nil
 }
 
