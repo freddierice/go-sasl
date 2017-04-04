@@ -61,7 +61,7 @@ func encode(conn *C.struct_sasl_conn, buf []byte) (out []byte, err error) {
 	input := C.CString(string(buf))
 	inputLen := C.uint(len(buf))
 
-	res := C.sasl_encode(conn, input, inputLen, unsafe.Pointer(&outputStr),
+	res := C.sasl_encode(conn, input, inputLen, &outputStr,
 		&outputLen)
 	if res != C.SASL_OK {
 		return nil, newError(conn, res, "encode")
@@ -79,7 +79,7 @@ func decode(conn *C.struct_sasl_conn, buf []byte) (out []byte,
 	input := C.CString(string(buf))
 	inputLen := C.uint(len(buf))
 
-	res := C.sasl_decode(conn, input, inputLen, unsafe.Pointer(&outputStr),
+	res := C.sasl_decode(conn, input, inputLen, &outputStr,
 		&outputLen)
 	if res != C.SASL_OK {
 		return nil, newError(conn, res, "decode")

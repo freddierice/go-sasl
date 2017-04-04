@@ -308,8 +308,8 @@ func (cl *Client) Start(mechlist []string) (mech string, response []byte,
 
 	for {
 		res = C.sasl_client_start(cl.client.sc_conn, mechlistStr,
-			unsafe.Pointer(&prompt), unsafe.Pointer(&responseStr),
-			&responseLen, unsafe.Pointer(&mechStr))
+			&prompt, &responseStr,
+			&responseLen, &mechStr)
 		if res != C.SASL_INTERACT {
 			break
 		}
@@ -342,7 +342,7 @@ func (cl *Client) Step(challenge []byte) (response []byte, done bool,
 	challengeLen := C.uint(len(challenge))
 	for {
 		res = C.sasl_client_step(cl.client.sc_conn, challengeStr, challengeLen,
-			unsafe.Pointer(prompt), &responseStr, &responseLen)
+			&prompt, &responseStr, &responseLen)
 		if res != C.SASL_INTERACT {
 			break
 		}
